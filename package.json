@@ -1,0 +1,30 @@
+{
+  "name": "mock-fluidnc",
+  "version": "0.1.0",
+  "description": "NodeJS FluidNC simulator for UI development.",
+  "type": "module",
+  "bin": {
+    "mock-fluidnc": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/cli.js",
+    "start:serial": "node dist/src/cli.js --serial",
+    "serial:screen": "screen /tmp/mock-fluidnc-serial 115200",
+    "dev": "node --enable-source-maps dist/src/cli.js",
+    "dev:serial": "node --enable-source-maps dist/src/cli.js --serial",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3"
+  }
+}

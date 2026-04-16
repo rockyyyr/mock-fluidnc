@@ -1,0 +1,99 @@
+board: Virtual Bench
+name: Full Config Fixture
+stepping:
+  engine: RMT
+  idle_ms: 250
+  pulse_us: 4
+sdcard:
+  cs_pin: gpio.5
+  frequency_hz: 8000000
+kinematics:
+  CoreXY:
+    segment_mm: 1
+axes:
+  x:
+    steps_per_mm: 80
+    max_rate_mm_per_min: 5000
+    acceleration_mm_per_sec2: 100
+    max_travel_mm: 300
+    soft_limits: true
+    motor0:
+      limit_neg_pin: gpio.32:low
+      limit_pos_pin: NO_PIN
+      hard_limits: true
+      pulloff_mm: 2
+      stepstick:
+        step_pin: gpio.26
+        direction_pin: gpio.27
+        disable_pin: gpio.14
+  y:
+    steps_per_mm: 80
+    max_rate_mm_per_min: 5000
+    acceleration_mm_per_sec2: 100
+    max_travel_mm: 300
+    soft_limits: true
+    motor0:
+      limit_neg_pin: gpio.33:low
+      hard_limits: true
+      pulloff_mm: 2
+      stepstick:
+        step_pin: gpio.12
+        direction_pin: gpio.13
+        disable_pin: gpio.15
+control:
+  safety_door_pin: gpio.34:low
+  reset_pin: NO_PIN
+  feed_hold_pin: NO_PIN
+  cycle_start_pin: NO_PIN
+  fault_pin: gpio.35:low
+  estop_pin: NO_PIN
+coolant:
+  flood_pin: gpio.21
+  mist_pin: NO_PIN
+  delay_ms: 250
+probe:
+  pin: gpio.39:low
+  toolsetter_pin: NO_PIN
+  check_mode_start: true
+  hard_stop: true
+macros:
+  startup_line0: G21
+  startup_line1: G90
+  macro0: G0 X0 Y0
+  after_homing: G53 G0 Z0
+  after_reset: G4 P0.1
+  after_unlock: G4 P0.1
+spindle:
+  PWM:
+    output_pin: gpio.22
+    enable_pin: gpio.23
+    direction_pin: gpio.19
+    laser_mode: true
+    min_rpm: 0
+    max_rpm: 24000
+    spinup_ms: 500
+    spindown_ms: 800
+    m6_macro: G4 P0.2
+parking:
+  enable: true
+  axis: Z
+  target_mpos_mm: -3
+  rate_mm_per_min: 600
+  pullout_distance_mm: 5
+  pullout_rate_mm_per_min: 200
+user_outputs:
+  analog0_pin: gpio.25
+  analog0_hz: 1000
+  digital0_pin: gpio.2
+user_inputs:
+  digital0_pin: gpio.36:low
+arc_tolerance_mm: 0.002
+junction_deviation_mm: 0.01
+planner_blocks: 24
+verbose_errors: true
+report_inches: false
+use_line_numbers: true
+start:
+  must_home: true
+  deactivate_parking: false
+  check_limits: true

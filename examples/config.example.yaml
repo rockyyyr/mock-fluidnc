@@ -1,0 +1,190 @@
+board: Mock FluidNC
+name: Mock FluidNC Full Example
+
+kinematics:
+  Cartesian:
+
+arc_tolerance_mm: 0.002
+junction_deviation_mm: 0.010
+planner_blocks: 15
+report_inches: false
+verbose_errors: false
+use_line_numbers: false
+
+stepping:
+  engine: virtual
+  idle_ms: 250
+  pulse_us: 4
+  dir_delay_us: 1
+  disable_delay_us: 0
+
+axes:
+  shared_stepper_disable_pin: NO_PIN
+
+  x:
+    steps_per_mm: 800.000
+    max_rate_mm_per_min: 5000.000
+    acceleration_mm_per_sec2: 100.000
+    max_travel_mm: 300.000
+    soft_limits: true
+    homing:
+      cycle: 2
+      positive_direction: false
+      mpos_mm: 0.000
+      feed_mm_per_min: 100.000
+      seek_mm_per_min: 1000.000
+      settle_ms: 250
+      seek_scaler: 1.100
+      feed_scaler: 1.100
+    motor0:
+      limit_neg_pin: NO_PIN
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: false
+      pulloff_mm: 1.000
+      null_motor:
+
+  y:
+    steps_per_mm: 800.000
+    max_rate_mm_per_min: 5000.000
+    acceleration_mm_per_sec2: 100.000
+    max_travel_mm: 300.000
+    soft_limits: true
+    homing:
+      cycle: 2
+      positive_direction: false
+      mpos_mm: 0.000
+      feed_mm_per_min: 100.000
+      seek_mm_per_min: 1000.000
+      settle_ms: 250
+      seek_scaler: 1.100
+      feed_scaler: 1.100
+    motor0:
+      limit_neg_pin: NO_PIN
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: false
+      pulloff_mm: 1.000
+      null_motor:
+
+  z:
+    steps_per_mm: 800.000
+    max_rate_mm_per_min: 1500.000
+    acceleration_mm_per_sec2: 80.000
+    max_travel_mm: 120.000
+    soft_limits: true
+    homing:
+      cycle: 1
+      positive_direction: true
+      mpos_mm: 0.000
+      feed_mm_per_min: 100.000
+      seek_mm_per_min: 800.000
+      settle_ms: 250
+      seek_scaler: 1.100
+      feed_scaler: 1.100
+    motor0:
+      limit_neg_pin: NO_PIN
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: false
+      pulloff_mm: 1.000
+      null_motor:
+
+sdcard:
+  cs_pin: NO_PIN
+  card_detect_pin: NO_PIN
+  frequency_hz: 8000000
+
+localfs:
+  root: files
+
+control:
+  safety_door_pin: NO_PIN
+  reset_pin: NO_PIN
+  feed_hold_pin: NO_PIN
+  cycle_start_pin: NO_PIN
+  fault_pin: NO_PIN
+  estop_pin: NO_PIN
+  macro0_pin: NO_PIN
+  macro1_pin: NO_PIN
+  macro2_pin: NO_PIN
+  macro3_pin: NO_PIN
+
+coolant:
+  flood_pin: virtual.flood
+  mist_pin: virtual.mist
+  delay_ms: 0
+
+probe:
+  pin: virtual.probe
+  toolsetter_pin: NO_PIN
+  check_mode_start: true
+  hard_stop: false
+
+macros:
+  startup_line0:
+  startup_line1:
+  macro0: G0 X0 Y0
+  macro1: G0 Z0
+  macro2:
+  macro3:
+  after_homing:
+  after_reset:
+  after_unlock:
+
+spindle:
+  PWM:
+    output_pin: virtual.spindle
+    enable_pin: NO_PIN
+    direction_pin: NO_PIN
+    disable_with_s0: false
+    s0_with_disable: true
+    spinup_ms: 0
+    spindown_ms: 0
+    min_rpm: 0
+    max_rpm: 24000
+    laser_mode: false
+    m6_macro:
+
+parking:
+  enable: true
+  axis: Z
+  target_mpos_mm: 0.000
+  rate_mm_per_min: 1000.000
+  pullout_distance_mm: 5.000
+  pullout_rate_mm_per_min: 500.000
+
+user_inputs:
+  digital0_pin: NO_PIN
+  digital1_pin: NO_PIN
+  analog0_pin: NO_PIN
+  analog0_hz: 5000
+
+user_outputs:
+  digital0_pin: NO_PIN
+  digital1_pin: NO_PIN
+  analog0_pin: NO_PIN
+  analog0_hz: 5000
+
+i2c:
+  sda: NO_PIN
+  scl: NO_PIN
+
+spi:
+  miso_pin: NO_PIN
+  mosi_pin: NO_PIN
+  sck_pin: NO_PIN
+
+i2so:
+  bck_pin: NO_PIN
+  data_pin: NO_PIN
+  ws_pin: NO_PIN
+
+extenders:
+  virtual0:
+    comment: Accepted as inert config by Mock FluidNC.
+
+start:
+  must_home: false
+  deactivate_parking: false
+  check_limits: true
