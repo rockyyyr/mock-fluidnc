@@ -30,6 +30,10 @@ export function formatStatus(snapshot: MachineStateSnapshot, options: StatusForm
   if (reportBuffer) {
     fields.splice(2, 0, `Bf:${snapshot.plannerBlocksAvailable},${snapshot.rxBufferAvailable}`);
   }
+  if (snapshot.activeLimitPins.length > 0) {
+    const fsIndex = fields.findIndex((field) => field.startsWith("FS:"));
+    fields.splice(fsIndex + 1, 0, `Pn:${snapshot.activeLimitPins.join("")}`);
+  }
 
   const accessoryState = [
     snapshot.spindleDirection === "cw" ? "S" : "",

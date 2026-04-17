@@ -5,8 +5,10 @@ import { executeGCodeLine } from "../src/gcode/GCodeExecutor.js";
 import { HomingSimulator } from "../src/machine/HomingSimulator.js";
 import { MachineState } from "../src/machine/MachineState.js";
 import { ProbeModel } from "../src/machine/ProbeModel.js";
+import { MotionSimulator } from "../src/motion/MotionSimulator.js";
 import { FluidProtocol } from "../src/protocol/FluidProtocol.js";
 import { BufferedOutput } from "../src/transports/BufferedOutput.js";
+import { ManualClock } from "../src/time/Clock.js";
 
 const config: NormalizedConfig = {
   name: "safety",
@@ -21,27 +23,41 @@ const config: NormalizedConfig = {
 
 describe("homing, probing, and safety fidelity", () => {
   it("records homing seek, feed, pull-off, and complete phases", () => {
+    const clock = new ManualClock();
     const machine = new MachineState();
-    const homing = new HomingSimulator(machine, config);
+    const motion = new MotionSimulator(machine, { clock, axes: config.axes });
+    const homing = new HomingSimulator(machine, config, { clock, motion });
 
     homing.homeAxes(["x", "y"]);
 
     assert.deepEqual(
       homing.history().map((phase) => phase.phase),
-      ["seek", "feed", "pull-off", "complete", "seek", "feed", "pull-off", "complete"]
+      ["seek", "seek", "pull-off", "pull-off", "feed", "feed", "pull-off", "pull-off", "complete", "complete"]
     );
-    assert.equal(machine.snapshot().machinePosition.x, 2);
-    assert.equal(machine.snapshot().machinePosition.y, 97);
+    clock.advance(1000);
+    homing.update();
+    assert.ok(machine.snapshot().machinePosition.x < 0);
+    assert.ok(machine.snapshot().machinePosition.y > 0);
+
+    clock.advance(60000);
+    homing.update();
+    assert.equal(machine.snapshot().machinePosition.x, 0);
+    assert.equal(machine.snapshot().machinePosition.y, 100);
   });
 
   it("supports per-axis homing through protocol commands", () => {
+    const clock = new ManualClock();
     const machine = new MachineState();
-    const homing = new HomingSimulator(machine, config);
-    const protocol = new FluidProtocol(machine, new BufferedOutput(), { homing });
+    const motion = new MotionSimulator(machine, { clock, axes: config.axes });
+    const homing = new HomingSimulator(machine, config, { clock, motion });
+    const protocol = new FluidProtocol(machine, new BufferedOutput(), { homing, motion });
 
     protocol.receive("$hx\n");
 
-    assert.equal(machine.snapshot().machinePosition.x, 2);
+    assert.equal(machine.snapshot().state, "Home");
+    clock.advance(10000);
+    protocol.receive("?");
+    assert.equal(machine.snapshot().machinePosition.x, 0);
     assert.equal(machine.snapshot().machinePosition.y, 0);
   });
 
@@ -57,6 +73,30 @@ describe("homing, probing, and safety fidelity", () => {
     executeGCodeLine(machine, "G38.2 Z-5", { probe });
     assert.equal(machine.snapshot().state, "Alarm");
     assert.equal(machine.snapshot().alarm, "Probe fail");
+  });
+
+  it("runs probing motion through the shared motion simulator", () => {
+    const clock = new ManualClock();
+    const machine = new MachineState();
+    const motion = new MotionSimulator(machine, { clock });
+    const probe = new ProbeModel(machine, { triggerPosition: { z: -1 }, shouldTrigger: true });
+
+    executeGCodeLine(machine, "G38.2 Z-5 F60", { motion, probe });
+
+    assert.equal(machine.snapshot().state, "Run");
+    assert.equal(machine.snapshot().probeSucceeded, false);
+    clock.advance(500);
+    motion.update();
+    assert.equal(machine.snapshot().state, "Run");
+    assert.ok(machine.snapshot().machinePosition.z < 0);
+    assert.ok(machine.snapshot().machinePosition.z > -1);
+
+    clock.advance(2000);
+    motion.update();
+    probe.update();
+    assert.equal(machine.snapshot().state, "Idle");
+    assert.equal(machine.snapshot().probeSucceeded, true);
+    assert.equal(machine.snapshot().probePosition.z, -1);
   });
 
   it("supports safety door, fault, and e-stop recovery behavior", () => {

@@ -20,6 +20,14 @@ export interface MotionTarget {
 
 export type MotionKind = "linear" | "arc";
 
+export interface SystemMotionOptions {
+  feedRateMmPerMin: number;
+  runState?: MachineRunState;
+  skipSoftLimits?: boolean;
+  noFeedOverride?: boolean;
+  startTimeMs?: number;
+}
+
 interface ActiveMotion {
   kind: MotionKind;
   startTime: number;
@@ -28,6 +36,21 @@ interface ActiveMotion {
   end: AxisPosition;
   runState: MachineRunState;
   pausedAt?: number;
+}
+
+interface VirtualLimitHit {
+  axis: keyof AxisPosition;
+  position: AxisPosition;
+}
+
+interface MotionPlanOptions {
+  rapid?: boolean;
+  runState?: MachineRunState;
+  distanceScale?: number;
+  feedRateMmPerMin?: number;
+  skipSoftLimits?: boolean;
+  noFeedOverride?: boolean;
+  startTimeMs?: number;
 }
 
 interface MotionProfile {
@@ -43,6 +66,7 @@ interface MotionProfile {
 
 export class MotionSimulator {
   private activeMotion: ActiveMotion | undefined;
+  private completedMotionAt: number | undefined;
   private readonly rapidRateMmPerMin: number;
 
   constructor(private readonly machine: MachineState, private readonly options: MotionSimulatorOptions) {
@@ -50,15 +74,25 @@ export class MotionSimulator {
   }
 
   planLinear(target: MotionTarget, rapid = false): boolean {
-    return this.plan("linear", target, rapid);
+    return this.plan("linear", target, { rapid });
   }
 
   planLinearAs(target: MotionTarget, runState: MachineRunState, rapid = false): boolean {
-    return this.plan("linear", target, rapid, 1, runState);
+    return this.plan("linear", target, { rapid, runState });
+  }
+
+  planSystemLinear(target: MotionTarget, options: SystemMotionOptions): boolean {
+    return this.plan("linear", target, {
+      runState: options.runState ?? "Run",
+      feedRateMmPerMin: options.feedRateMmPerMin,
+      skipSoftLimits: options.skipSoftLimits ?? true,
+      noFeedOverride: options.noFeedOverride ?? true,
+      startTimeMs: options.startTimeMs
+    });
   }
 
   planArc(target: MotionTarget, runState: MachineRunState = "Run"): boolean {
-    return this.plan("arc", target, false, 1.1, runState);
+    return this.plan("arc", target, { runState, distanceScale: 1.1 });
   }
 
   update(): void {
@@ -78,10 +112,27 @@ export class MotionSimulator {
     const progress =
       this.activeMotion.profile.distanceMm <= 0 ? 1 : Math.min(1, Math.max(0, traveled / this.activeMotion.profile.distanceMm));
     const position = interpolate(this.activeMotion.start, this.activeMotion.end, progress);
-    this.machine.setMachinePosition(position);
+    const virtualLimitHit = this.virtualLimitHit(position, this.activeMotion);
+    this.machine.setMachinePosition(virtualLimitHit?.position ?? position);
+    this.updateVirtualLimitPins(virtualLimitHit?.position ?? position);
     this.machine.setCurrentFeedRate(velocityAtElapsed(this.activeMotion.profile, elapsedSec) * 60);
 
+    if (virtualLimitHit) {
+      const runState = this.activeMotion.runState;
+      this.completedMotionAt = virtualLimitHitTime(this.activeMotion, virtualLimitHit.position);
+      this.activeMotion = undefined;
+      this.machine.setPlannerSummary(15, 128);
+      this.machine.setCurrentFeedRate(0);
+      if (runState === "Home") {
+        this.machine.setRunState("Idle");
+      } else {
+        this.machine.setAlarm(`Hard limit ${String(virtualLimitHit.axis).toUpperCase()}`);
+      }
+      return;
+    }
+
     if (progress >= 1) {
+      this.completedMotionAt = this.activeMotion.startTime + this.activeMotion.profile.totalTimeSec * 1000;
       this.activeMotion = undefined;
       this.machine.setRunState("Idle");
       this.machine.setCurrentFeedRate(0);
@@ -94,8 +145,15 @@ export class MotionSimulator {
     return this.activeMotion !== undefined;
   }
 
+  consumeCompletedMotionTime(): number | undefined {
+    const completedAt = this.completedMotionAt;
+    this.completedMotionAt = undefined;
+    return completedAt;
+  }
+
   cancel(runState: MachineRunState = "Idle"): void {
     this.activeMotion = undefined;
+    this.completedMotionAt = undefined;
     this.machine.setRunState(runState);
     this.machine.setCurrentFeedRate(0);
     this.machine.setPlannerSummary(15, 128);
@@ -121,30 +179,33 @@ export class MotionSimulator {
     this.machine.setRunState(this.activeMotion.runState);
   }
 
-  private plan(kind: MotionKind, target: MotionTarget, rapid: boolean, distanceScale = 1, runState: MachineRunState = "Run"): boolean {
+  private plan(kind: MotionKind, target: MotionTarget, options: MotionPlanOptions = {}): boolean {
     this.update();
     const snapshot = this.machine.snapshot();
+    const rapid = options.rapid ?? false;
+    const runState = options.runState ?? "Run";
     const requestedEnd = resolveTarget(snapshot.machinePosition, target);
     const end = runState === "Jog" ? this.constrainJogTarget(snapshot.machinePosition, requestedEnd) : requestedEnd;
-    if (runState !== "Jog" && !this.validateSoftLimits(end)) {
+    if (!options.skipSoftLimits && runState !== "Jog" && !this.validateSoftLimits(end)) {
       return false;
     }
 
-    const distance = distanceBetween(snapshot.machinePosition, end) * distanceScale;
+    const distance = distanceBetween(snapshot.machinePosition, end) * (options.distanceScale ?? 1);
     if (distance <= 0) {
       return false;
     }
     const unitVector = unitVectorBetween(snapshot.machinePosition, end);
     const axisLimitedRate = this.axisLimitedRateMmPerMin(unitVector);
-    const programmedRate = rapid ? this.rapidFeedRateMmPerMin(snapshot.machinePosition, end) : snapshot.feedRate || this.rapidRateMmPerMin;
-    const override = rapid ? snapshot.rapidOverride : runState === "Jog" ? 100 : snapshot.feedrateOverride;
+    const programmedRate =
+      options.feedRateMmPerMin ?? (rapid ? this.rapidFeedRateMmPerMin(snapshot.machinePosition, end) : snapshot.feedRate || this.rapidRateMmPerMin);
+    const override = options.noFeedOverride ? 100 : rapid ? snapshot.rapidOverride : runState === "Jog" ? 100 : snapshot.feedrateOverride;
     const overrideRate = programmedRate * (override / 100);
     const effectiveRate = !rapid && axisLimitedRate !== undefined ? Math.min(overrideRate, axisLimitedRate) : overrideRate;
     const profile = calculateMotionProfile(distance, effectiveRate, this.axisLimitedAccelerationMmPerSec2(unitVector));
 
     this.activeMotion = {
       kind,
-      startTime: this.options.clock.now(),
+      startTime: options.startTimeMs ?? this.options.clock.now(),
       profile,
       start: snapshot.machinePosition,
       end,
@@ -244,6 +305,45 @@ export class MotionSimulator {
 
     return axisLimitedAccelerations.length > 0 ? Math.min(...axisLimitedAccelerations) : this.accelerationMmPerSec2();
   }
+
+  private virtualLimitHit(position: AxisPosition, motion: ActiveMotion): VirtualLimitHit | undefined {
+    const limitedPosition = { ...position };
+    for (const [axis, config] of Object.entries(this.options.axes ?? {})) {
+      if (config.softLimits || config.maxTravelMm === undefined) {
+        continue;
+      }
+      const key = axis as keyof AxisPosition;
+      const value = limitedPosition[key];
+      const start = motion.start[key] ?? 0;
+      const end = motion.end[key] ?? start;
+      if (value === undefined) {
+        continue;
+      }
+      const negativeLimit = -1;
+      const positiveLimit = config.maxTravelMm + 1;
+      if (value <= negativeLimit && end <= start) {
+        limitedPosition[key] = negativeLimit;
+        return { axis: key, position: limitedPosition };
+      }
+      if (value >= positiveLimit && end >= start) {
+        limitedPosition[key] = positiveLimit;
+        return { axis: key, position: limitedPosition };
+      }
+    }
+    return undefined;
+  }
+
+  private updateVirtualLimitPins(position: AxisPosition): void {
+    for (const [axis, config] of Object.entries(this.options.axes ?? {})) {
+      if (config.softLimits || config.maxTravelMm === undefined) {
+        this.machine.setLimitPin(axis, false);
+        continue;
+      }
+      const value = position[axis as keyof AxisPosition];
+      const active = value !== undefined && (value <= -1 || value >= config.maxTravelMm + 1);
+      this.machine.setLimitPin(axis, active);
+    }
+  }
 }
 
 function calculateMotionProfile(distanceMm: number, feedRateMmPerMin: number, accelerationMmPerSec2: number): MotionProfile {
@@ -337,14 +437,24 @@ function resolveTarget(start: AxisPosition, target: MotionTarget): AxisPosition 
 }
 
 function interpolate(start: AxisPosition, end: AxisPosition, progress: number): AxisPosition {
-  return {
+  const position: AxisPosition = {
     x: interpolateAxis(start.x, end.x, progress),
     y: interpolateAxis(start.y, end.y, progress),
-    z: interpolateAxis(start.z, end.z, progress),
-    a: interpolateOptionalAxis(start.a, end.a, progress),
-    b: interpolateOptionalAxis(start.b, end.b, progress),
-    c: interpolateOptionalAxis(start.c, end.c, progress)
+    z: interpolateAxis(start.z, end.z, progress)
   };
+  const a = interpolateOptionalAxis(start.a, end.a, progress);
+  const b = interpolateOptionalAxis(start.b, end.b, progress);
+  const c = interpolateOptionalAxis(start.c, end.c, progress);
+  if (a !== undefined) {
+    position.a = a;
+  }
+  if (b !== undefined) {
+    position.b = b;
+  }
+  if (c !== undefined) {
+    position.c = c;
+  }
+  return position;
 }
 
 function interpolateAxis(start: number, end: number, progress: number): number {
@@ -365,6 +475,13 @@ function distanceBetween(start: AxisPosition, end: AxisPosition): number {
     return total + delta * delta;
   }, 0);
   return Math.sqrt(sum);
+}
+
+function virtualLimitHitTime(motion: ActiveMotion, position: AxisPosition): number {
+  const distance = distanceBetween(motion.start, motion.end);
+  const hitDistance = distanceBetween(motion.start, position);
+  const progress = distance <= 0 ? 1 : Math.min(1, Math.max(0, hitDistance / distance));
+  return motion.startTime + motion.profile.totalTimeSec * 1000 * progress;
 }
 
 function softLimitBounds(axis: AxisConfig): { min: number; max: number } {

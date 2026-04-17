@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { MachineState } from "../machine/MachineState.js";
 import { executeGCodeLine } from "../gcode/GCodeExecutor.js";
-import { HomingSimulator } from "../machine/HomingSimulator.js";
+import { HomingSimulator, type HomingCompletion } from "../machine/HomingSimulator.js";
 import { MotionSimulator } from "../motion/MotionSimulator.js";
 import { FileJobManager } from "../files/FileJobManager.js";
 import { ProbeModel } from "../machine/ProbeModel.js";
@@ -45,6 +45,7 @@ export class FluidProtocol {
   private lineBuffer = "";
   private macroDepth = 0;
   private autoReportTimer: ReturnType<typeof setInterval> | undefined;
+  private pendingHomingCompletionMessage: string | undefined;
 
   constructor(machine: MachineState, output: ProtocolOutput, options: ProtocolOptions = {}) {
     this.machine = machine;
@@ -94,7 +95,8 @@ export class FluidProtocol {
     }
 
     if (command === "?") {
-      return { ok: true, lines: [this.formatCurrentStatus()] };
+      const completion = this.updateMotionSubsystems();
+      return this.mergeResults(completion, { ok: true, lines: [this.formatCurrentStatus()] });
     }
 
     const normalized = command.toLowerCase();
@@ -178,7 +180,8 @@ export class FluidProtocol {
     }
 
     if (isCommandName(commandName, "state", "t")) {
-      return { ok: true, lines: [this.formatCurrentStatus()] };
+      const completion = this.updateMotionSubsystems();
+      return this.mergeResults(completion, { ok: true, lines: [this.formatCurrentStatus()] });
     }
 
     if (isCommandName(commandName, "alarm/send")) {
@@ -188,7 +191,7 @@ export class FluidProtocol {
     }
 
     if (isCommandName(commandName, "limits/show")) {
-      return { ok: true, lines: ["[LIMITS:X0,Y0,Z0,A0,B0,C0]"] };
+      return { ok: true, lines: [formatLimitReport(this.machine.snapshot().activeLimitPins)] };
     }
 
     if (isCommandName(commandName, "mi", "motors/init")) {
@@ -270,7 +273,8 @@ export class FluidProtocol {
     if (isCommandName(commandName, "h", "home")) {
       if (this.homing) {
         this.homing.homeAll();
-        return this.mergeResults({ ok: true, lines: ["[MSG:Homing complete]"] }, this.runNamedMacro("afterHoming"));
+        this.pendingHomingCompletionMessage = "[MSG:Homing complete]";
+        return { ok: true, lines: ["[MSG:Homing started]"] };
       } else {
         this.machine.startHoming();
         return this.mergeResults({ ok: true, lines: ["[MSG:Homing started]"] }, this.runNamedMacro("afterHoming"));
@@ -281,7 +285,8 @@ export class FluidProtocol {
     if (homeAxis) {
       if (this.homing) {
         this.homing.homeAxes([homeAxis[1]]);
-        return this.mergeResults({ ok: true, lines: [`[MSG:Homing ${homeAxis[1].toUpperCase()} complete]`] }, this.runNamedMacro("afterHoming"));
+        this.pendingHomingCompletionMessage = `[MSG:Homing ${homeAxis[1].toUpperCase()} complete]`;
+        return { ok: true, lines: [`[MSG:Homing ${homeAxis[1].toUpperCase()} started]`] };
       }
       this.machine.startHoming();
       return this.mergeResults({ ok: true, lines: [`[MSG:Homing ${homeAxis[1].toUpperCase()} started]`] }, this.runNamedMacro("afterHoming"));
@@ -291,7 +296,8 @@ export class FluidProtocol {
     if (longHomeAxis) {
       if (this.homing) {
         this.homing.homeAxes([longHomeAxis[1].toLowerCase()]);
-        return this.mergeResults({ ok: true, lines: [`[MSG:Homing ${longHomeAxis[1].toUpperCase()} complete]`] }, this.runNamedMacro("afterHoming"));
+        this.pendingHomingCompletionMessage = `[MSG:Homing ${longHomeAxis[1].toUpperCase()} complete]`;
+        return { ok: true, lines: [`[MSG:Homing ${longHomeAxis[1].toUpperCase()} started]`] };
       }
       this.machine.startHoming();
       return this.mergeResults({ ok: true, lines: [`[MSG:Homing ${longHomeAxis[1].toUpperCase()} started]`] }, this.runNamedMacro("afterHoming"));
@@ -384,7 +390,10 @@ export class FluidProtocol {
   }
 
   writeStatus(logTraffic = true): void {
-    this.motion?.update();
+    const completion = this.updateMotionSubsystems();
+    for (const responseLine of completion.lines) {
+      this.writeLine(responseLine, logTraffic);
+    }
     this.writeLine(this.formatCurrentStatus(), logTraffic);
   }
 
@@ -415,6 +424,7 @@ export class FluidProtocol {
       case 0x18:
         this.logTraffic("rx", formatRealtimeByte(byte));
         this.jobs?.cancel();
+        this.homing?.cancel();
         this.machine.reset();
         this.runNamedMacro("afterReset");
         this.writeGreeting();
@@ -433,7 +443,7 @@ export class FluidProtocol {
         return true;
       case 0x10:
         this.logTraffic("rx", formatRealtimeByte(byte));
-        this.motion?.update();
+        this.updateMotionSubsystems();
         if (this.motion?.isActive()) {
           return true;
         }
@@ -441,6 +451,7 @@ export class FluidProtocol {
         return true;
       case 0x84:
         this.logTraffic("rx", formatRealtimeByte(byte));
+        this.homing?.cancel("Alarm");
         if (this.jobs) {
           this.jobs.alarm("Emergency stop");
         } else {
@@ -501,6 +512,23 @@ export class FluidProtocol {
 
   private formatCurrentStatus(): string {
     return formatStatus(this.machine.snapshot(), { statusMask: this.settings.getGrbl("10") ?? "1" });
+  }
+
+  private updateHomingCompletion(): CommandResult {
+    const completion = this.homing?.update();
+    if (!completion) {
+      return { ok: true, lines: [] };
+    }
+    const message = this.pendingHomingCompletionMessage ?? homingCompletionMessage(completion);
+    this.pendingHomingCompletionMessage = undefined;
+    return this.mergeResults({ ok: true, lines: [message] }, this.runNamedMacro("afterHoming"));
+  }
+
+  private updateMotionSubsystems(): CommandResult {
+    const completion = this.updateHomingCompletion();
+    this.motion?.update();
+    this.probe?.update();
+    return completion;
   }
 
   private runMacro(index: number): CommandResult {
@@ -762,6 +790,18 @@ function validOptionsForSetting(name: string): string[] {
     return ["[MSG:INFO: Valid options: true false]"];
   }
   return ["[MSG:INFO: Valid options unavailable in simulator]"];
+}
+
+function homingCompletionMessage(completion: HomingCompletion): string {
+  if (completion.allAxes) {
+    return "[MSG:Homing complete]";
+  }
+  return `[MSG:Homing ${completion.axes.map((axis) => axis.toUpperCase()).join("")} complete]`;
+}
+
+function formatLimitReport(activePins: string[]): string {
+  const active = new Set(activePins.map((pin) => pin.toUpperCase()));
+  return `[LIMITS:${["X", "Y", "Z", "A", "B", "C"].map((axis) => `${axis}${active.has(axis) ? 1 : 0}`).join(",")}]`;
 }
 
 function isFileCommandName(name: string): boolean {

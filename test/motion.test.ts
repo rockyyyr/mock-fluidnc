@@ -4,6 +4,7 @@ import { MachineState } from "../src/machine/MachineState.js";
 import { MotionSimulator } from "../src/motion/MotionSimulator.js";
 import { ManualClock } from "../src/time/Clock.js";
 import { executeGCodeLine } from "../src/gcode/GCodeExecutor.js";
+import { formatStatus } from "../src/protocol/status.js";
 
 describe("MotionSimulator", () => {
   it("simulates linear movement over deterministic time", () => {
@@ -185,6 +186,51 @@ describe("MotionSimulator", () => {
 
     assert.equal(motion.planLinear({ x: 2 }), false);
     assert.equal(machine.snapshot().state, "Alarm");
+  });
+
+  it("triggers virtual limit pins for axes without soft limits", () => {
+    const clock = new ManualClock();
+    const machine = new MachineState();
+    const motion = new MotionSimulator(machine, {
+      clock,
+      axes: {
+        x: { id: "x", maxTravelMm: 3, maxRateMmPerMin: 600, accelerationMmPerSec2: 1000, softLimits: false }
+      }
+    });
+
+    machine.setFeedRate(600);
+    assert.equal(motion.planLinear({ x: 10 }), true);
+    clock.advance(1000);
+    motion.update();
+
+    assert.equal(machine.snapshot().state, "Alarm");
+    assert.equal(machine.snapshot().alarm, "Hard limit X");
+    assert.equal(machine.snapshot().machinePosition.x, 4);
+    assert.deepEqual(machine.snapshot().activeLimitPins, ["X"]);
+    assert.match(formatStatus(machine.snapshot()), /\|Pn:X\|/);
+  });
+
+  it("clears virtual limit pins when moving away from the switch", () => {
+    const clock = new ManualClock();
+    const machine = new MachineState();
+    const motion = new MotionSimulator(machine, {
+      clock,
+      axes: {
+        x: { id: "x", maxTravelMm: 3, maxRateMmPerMin: 600, accelerationMmPerSec2: 1000, softLimits: false }
+      }
+    });
+
+    machine.setMachinePosition({ x: -1 });
+    machine.setLimitPin("x", true);
+    machine.setFeedRate(600);
+    assert.equal(motion.planLinear({ x: 0 }), true);
+    clock.advance(500);
+    motion.update();
+
+    assert.equal(machine.snapshot().state, "Idle");
+    assert.equal(machine.snapshot().alarm, undefined);
+    assert.equal(machine.snapshot().machinePosition.x, 0);
+    assert.deepEqual(machine.snapshot().activeLimitPins, []);
   });
 
   it("constrains jogs to soft limits instead of alarming", () => {

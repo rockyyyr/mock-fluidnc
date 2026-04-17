@@ -215,7 +215,7 @@ function applyMotionEndpoint(
   }
   const probeWord = words.find((word) => word.letter === "G" && [38.2, 38.3, 38.4, 38.5].includes(word.value));
   if (probeWord) {
-    probe?.run(nextPosition, probeWord.value === 38.2 || probeWord.value === 38.4);
+    probe?.run(nextPosition, probeWord.value === 38.2 || probeWord.value === 38.4, motion);
     return;
   }
 

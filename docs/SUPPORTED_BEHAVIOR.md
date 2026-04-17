@@ -121,6 +121,13 @@ This document describes the current implemented surface.
 - Configured macro execution through `$RM=0` to `$RM=3`
 - Job pause, resume, cancel, reset, alarm, and completion tracking
 
+## Motion, Homing, Probing, And Limits
+
+- G-code, jogging, homing, probing, and virtual file jobs use the shared motion simulator for position and feedrate reporting.
+- Axes with `soft_limits: false` and `max_travel_mm` simulate virtual limit switches at machine position `-1` and `max_travel_mm + 1`.
+- Virtual limit switches are reported in status reports as `Pn:<axes>` and through `$Limits/Show`.
+- Non-homing motion that reaches a virtual limit switch enters a hard-limit alarm.
+
 ## Configuration
 
 - FluidNC-style YAML loading.

@@ -48,6 +48,7 @@ export interface MachineStateSnapshot {
   g30Position: AxisPosition;
   plannerBlocksAvailable: number;
   rxBufferAvailable: number;
+  activeLimitPins: string[];
   alarm?: string;
 }
 
@@ -62,6 +63,8 @@ export interface ModalState {
   programFlow: "running" | "paused" | "optional-stop" | "completed-m2" | "completed-m30";
   selectedTool: number;
 }
+
+const AXIS_REPORT_ORDER = ["X", "Y", "Z", "A", "B", "C"];
 
 export class MachineState {
   private state: MachineRunState = "Idle";
@@ -102,6 +105,7 @@ export class MachineState {
   private g30Position: AxisPosition = { x: 0, y: 0, z: 0 };
   private plannerBlocksAvailable = 15;
   private rxBufferAvailable = 128;
+  private activeLimitPins = new Set<string>();
   private alarm: string | undefined;
 
   snapshot(): MachineStateSnapshot {
@@ -135,6 +139,7 @@ export class MachineState {
       g30Position: { ...this.g30Position },
       plannerBlocksAvailable: this.plannerBlocksAvailable,
       rxBufferAvailable: this.rxBufferAvailable,
+      activeLimitPins: AXIS_REPORT_ORDER.filter((axis) => this.activeLimitPins.has(axis)),
       alarm: this.alarm
     };
   }
@@ -155,6 +160,19 @@ export class MachineState {
 
   setMachinePosition(position: Partial<AxisPosition>): void {
     this.machinePosition = { ...this.machinePosition, ...position };
+  }
+
+  setLimitPin(axis: string, active: boolean): void {
+    const pin = axis.toUpperCase();
+    if (active) {
+      this.activeLimitPins.add(pin);
+    } else {
+      this.activeLimitPins.delete(pin);
+    }
+  }
+
+  clearLimitPins(): void {
+    this.activeLimitPins.clear();
   }
 
   setRunState(state: MachineRunState): void {
